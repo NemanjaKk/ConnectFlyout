@@ -411,14 +411,21 @@ TEST_F(Xm6Connection, CodecNotificationUpdatesStateAndPublishes) {
 
     headset->notify({0x15, 0x02, 0x02}); // AAC
 
-    EXPECT_TRUE(waitUntil([&] { return controller->state().codec == "AAC"; }));
+    // The state changes before it is published, so wait for the publish itself
+    EXPECT_TRUE(waitUntil([&] {
+        std::lock_guard lock(mutex);
+        return !published.empty();
+    }));
+    std::this_thread::sleep_for(200ms);
     std::lock_guard lock(mutex);
     ASSERT_EQ(published.size(), 1u);
     EXPECT_EQ(published.front().codec, "AAC");
+    EXPECT_EQ(controller->state().codec, "AAC");
 }
 
-// A codec byte this app doesn't know, or a notification cut short, must leave the codec alone
-TEST_F(Xm6Connection, UnknownOrShortCodecNotificationKeepsTheCodec) {
+// A codec byte this app doesn't know, a notification cut short, or another COMMON_NTFY_STATUS
+// type must leave the codec alone
+TEST_F(Xm6Connection, UnknownShortOrOtherCodecNotificationKeepsTheCodec) {
     connect();
     std::mutex mutex;
     std::vector<DeviceState> published;
@@ -429,12 +436,17 @@ TEST_F(Xm6Connection, UnknownOrShortCodecNotificationKeepsTheCodec) {
 
     headset->notify({0x15, 0x02, 0x7f}); // unknown codec
     headset->notify({0x15, 0x02});       // no codec byte
-    headset->notify({0x15, 0x02, 0x02}); // AAC, so the wait below proves the first two were handled
+    headset->notify({0x15, 0x01, 0x02}); // not the codec type; read as a codec it would be AAC
+    headset->notify({0x15, 0x02, 0x01}); // SBC, last, so one publish proves the first three were ignored
 
-    EXPECT_TRUE(waitUntil([&] { return controller->state().codec == "AAC"; }));
+    EXPECT_TRUE(waitUntil([&] {
+        std::lock_guard lock(mutex);
+        return !published.empty();
+    }));
+    std::this_thread::sleep_for(200ms);
     std::lock_guard lock(mutex);
     ASSERT_EQ(published.size(), 1u);
-    EXPECT_EQ(published.front().codec, "AAC");
+    EXPECT_EQ(published.front().codec, "SBC");
 }
 
 TEST_F(Xm6Connection, RefusedSwitchThrowsAndKeepsState) {

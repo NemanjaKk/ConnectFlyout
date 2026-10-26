@@ -203,11 +203,9 @@ bool DeviceEventDispatcher::parseNotificationPayload(const std::vector<uint8_t>&
     // active codec changes, including after a multipoint switch settles. A codec this app doesn't
     // know keeps the one on screen instead of blanking it, like the V1 handler.
     if (opcode == 0x15 && payload.size() >= 3 && payload[1] == 0x02) {
-        const std::string codec = detail::codecName(payload[2]);
-        if (codec.empty()) {
+        if (!detail::applyCodec(payload[2], inOutState.codec)) {
             return false;
         }
-        inOutState.codec = codec;
         if (notify) dispatch(DeviceStateChanged{std::make_shared<const DeviceState>(inOutState)});
         return true;
     }
