@@ -399,13 +399,42 @@ TEST_F(Xm6Connection, SwitchPlaybackSendsTargetAndUpdatesState) {
 // The headset announces a codec change (COMMON_NTFY_STATUS, AUDIO_CODEC) on its own once
 // it settles, whether that follows a switch this app started, one started elsewhere, or
 // plain renegotiation - so nothing here needs to guess when to go ask for it.
-TEST_F(Xm6Connection, CodecNotificationUpdatesState) {
+TEST_F(Xm6Connection, CodecNotificationUpdatesStateAndPublishes) {
     connect();
     ASSERT_EQ(controller->state().codec, "LDAC");
+    std::mutex mutex;
+    std::vector<DeviceState> published;
+    controller->onStateChanged([&](const DeviceState& state) {
+        std::lock_guard lock(mutex);
+        published.push_back(state);
+    });
 
     headset->notify({0x15, 0x02, 0x02}); // AAC
 
     EXPECT_TRUE(waitUntil([&] { return controller->state().codec == "AAC"; }));
+    std::lock_guard lock(mutex);
+    ASSERT_EQ(published.size(), 1u);
+    EXPECT_EQ(published.front().codec, "AAC");
+}
+
+// A codec byte this app doesn't know, or a notification cut short, must leave the codec alone
+TEST_F(Xm6Connection, UnknownOrShortCodecNotificationKeepsTheCodec) {
+    connect();
+    std::mutex mutex;
+    std::vector<DeviceState> published;
+    controller->onStateChanged([&](const DeviceState& state) {
+        std::lock_guard lock(mutex);
+        published.push_back(state);
+    });
+
+    headset->notify({0x15, 0x02, 0x7f}); // unknown codec
+    headset->notify({0x15, 0x02});       // no codec byte
+    headset->notify({0x15, 0x02, 0x02}); // AAC, so the wait below proves the first two were handled
+
+    EXPECT_TRUE(waitUntil([&] { return controller->state().codec == "AAC"; }));
+    std::lock_guard lock(mutex);
+    ASSERT_EQ(published.size(), 1u);
+    EXPECT_EQ(published.front().codec, "AAC");
 }
 
 TEST_F(Xm6Connection, RefusedSwitchThrowsAndKeepsState) {
